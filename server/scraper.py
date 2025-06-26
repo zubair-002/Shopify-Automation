@@ -122,50 +122,6 @@ class MultiSiteSpider(scrapy.Spider):
 
             # Insert into database
             try:
-                # # Make sure self.conn and self.cursor are initialized in __init__ or globally
-                # # Check if product already exists for this user and product_id
-                # self.cursor.execute(
-                #     "SELECT COUNT(*) FROM products WHERE user_id = ? AND product_id = ?",
-                #     (self.user_id, item["product id"])
-                # )
-                # exists = self.cursor.fetchone()[0]
-
-                # if exists:
-                #     # Update the existing product
-                #     self.cursor.execute(
-                #         """
-                #         UPDATE products SET
-                #             url = ?,
-                #             title = ?,
-                #             variant = ?,
-                #             price = ?,
-                #             original_price = ?,
-                #             product_variant_option = ?,
-                #             image = ?,
-                #             description = ?,
-                #             published_at = ?,
-                #             created_at = ?,
-                #             updated_at = ?
-                #         WHERE user_id = ? AND product_id = ?
-                #         """,
-                #         (
-                #             item["url"],
-                #             item["title"],
-                #             item["variant"],
-                #             item["price"],
-                #             item["original price"],
-                #             item["product variant option"],
-                #             item["image"],
-                #             item["description"],
-                #             item["published_at"],
-                #             item["created_at"],
-                #             item["updated_at"],
-                #             self.user_id,
-                #             item["product id"]
-                #         )
-                #     )
-                # else:
-                #     # Insert new product
                     self.cursor.execute(
                         """
                         INSERT INTO products (
