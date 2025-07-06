@@ -239,50 +239,121 @@ def bulk_add():
     if not file or not api_key or not shop_domain:
         return jsonify({'status': 'error', 'error': 'Missing file, API key, or shop domain'}), 400
 
-    # Read CSV or Excel
     try:
         if file.filename.endswith('.csv'):
-            df = pd.read_csv(file)
+            df = pd.read_csv(file, encoding="utf-8")
         else:
             df = pd.read_excel(file)
     except Exception as e:
         return jsonify({'status': 'error', 'error': f'File read error: {str(e)}'}), 400
 
-    # Shopify API endpoint
-    url = f"https://{shop_domain}/admin/api/2023-10/products.json"
+    df = df.fillna("")
+    df.columns = [c.strip() for c in df.columns]
+
+    url = f"https://{shop_domain}/admin/api/2024-04/products.json"
     headers = {
         "X-Shopify-Access-Token": api_key,
         "Content-Type": "application/json"
     }
 
-    # Required columns: title, body_html, vendor, price, etc.
     results = []
-    for _, row in df.iterrows():
-        product_data = {
-            "product": {
-                "title": str(row.get("title", "")),
-                "body_html": str(row.get("body_html", "")),
-                "vendor": str(row.get("vendor", "")),
-                "product_type": str(row.get("product_type", "")),
-                "variants": [
-                    {
-                        "price": str(row.get("price", ""))
-                    }
-                ]
+    import json
+
+    # Group by Handle (each product)
+    for handle, group in df.groupby("Handle"):
+        first = group.iloc[0]
+        title = str(first.get("Title", "")).strip()
+        if not title:
+            results.append(f"handle {handle}: fail: missing title")
+            continue
+
+        body_html = str(first.get("Body (HTML)", ""))
+        vendor = str(first.get("Vendor", "FYP Automation"))
+        product_type = str(first.get("Type", "General"))
+        status = str(first.get("Status", "")).lower()
+        if status not in ["active", "draft", "archived"]:
+            status = "active"
+
+        # Images (unique, non-empty)
+        images = []
+        seen = set()
+        for _, row in group.iterrows():
+            src = str(row.get("Image Src", "")).strip()
+            if src and src not in seen:
+                images.append({"src": src})
+                seen.add(src)
+
+        # Options (Option1 Name, Option2 Name, Option3 Name)
+        options = []
+        for i in range(1, 4):
+            opt_name = str(first.get(f"Option{i} Name", "")).strip()
+            if opt_name and opt_name.lower() != "no":
+                values = sorted(set(str(row.get(f"Option{i} Value", "")).strip() for _, row in group.iterrows() if row.get(f"Option{i} Value", "")))
+                if values:
+                    options.append({"name": opt_name, "values": values})
+
+        # Variants
+        variants = []
+        for _, row in group.iterrows():
+            variant = {
+                "option1": str(row.get("Option1 Value", "") or "Default Title"),
+                "price": str(row.get("Variant Price", "")),
+                "sku": str(row.get("Variant SKU", "")),
+                "requires_shipping": str(row.get("Variant Requires Shipping", "TRUE")).upper() == "TRUE",
+                "taxable": str(row.get("Variant Taxable", "TRUE")).upper() == "TRUE",
+                "weight": float(row.get("Variant Grams", 0))/1000 if row.get("Variant Grams", "") else None,
+                "weight_unit": str(row.get("Variant Weight Unit", "")) or "kg",
+                "barcode": str(row.get("Variant Barcode", "")),
+                "inventory_quantity": int(float(row.get("Variant Inventory Qty", 0))) if row.get("Variant Inventory Qty", "") else None,
+                "inventory_management": str(row.get("Variant Inventory Tracker", "")) or None,
+                "compare_at_price": str(row.get("Variant Compare At Price", "")) if row.get("Variant Compare At Price", "") else None,
             }
+            # Add option2/option3 if present
+            if row.get("Option2 Value", ""):
+                variant["option2"] = str(row.get("Option2 Value", ""))
+            if row.get("Option3 Value", ""):
+                variant["option3"] = str(row.get("Option3 Value", ""))
+            # Remove None/empty fields
+            variant = {k: v for k, v in variant.items() if v not in [None, ""]}
+            variants.append(variant)
+
+        product = {
+            "title": title,
+            "body_html": body_html,
+            "vendor": vendor,
+            "product_type": product_type,
+            "status": status,
+            "variants": variants,
         }
+        if images:
+            product["images"] = images
+        if options:
+            product["options"] = options
+
+        product_data = {"product": product}
+        print(json.dumps(product_data, indent=2, ensure_ascii=False))
+
         try:
             resp = requests.post(url, headers=headers, json=product_data)
+            print("Shopify response:", resp.status_code, resp.text)
             if resp.status_code == 201:
-                results.append("ok")
+                results.append(f"handle {handle}: ok")
             else:
-                results.append(f"fail: {resp.text}")
+                results.append(f"handle {handle}: fail: {resp.text}")
         except Exception as e:
-            results.append(f"fail: {str(e)}")
+            results.append(f"handle {handle}: fail: {str(e)}")
 
-    if all(r == "ok" for r in results):
-        return jsonify({'status': 'success'})
+    success_count = sum(1 for r in results if "ok" in r)
+    print(f"Total products in file: {len(df.groupby('Handle'))}")
+    print(f"Successfully added: {success_count}")
+    print(f"Failed: {len(results) - success_count}")
+    print("Results:", results)
+
+    if success_count == len(results):
+        return jsonify({'status': 'success', 'details': results})
     else:
-        return jsonify({'status': 'error', 'error': str(results)}), 400
+        return jsonify({'status': 'partial', 'details': results}), 207
+
+
 if __name__ == '__main__':
     app.run(debug=True)
